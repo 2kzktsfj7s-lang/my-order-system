@@ -7,7 +7,7 @@ from datetime import datetime
 
 # --- 1. 初始化設定 ---
 MENU_FILE = "menu.xlsx"
-DB_FILE = "orders_v227.db" # 升級資料庫以支援 session 邏輯
+DB_FILE = "orders_v227.db" # 沿用上一版的資料庫即可
 
 if 'cart' not in st.session_state:
     st.session_state.cart = []
@@ -19,7 +19,6 @@ if 'receipt_text' not in st.session_state:
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # ✨ 欄位升級：新增 session_id 紀錄批次
     c.execute('''CREATE TABLE IF NOT EXISTS orders
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   姓名 TEXT, 飲品 TEXT, 茶底 TEXT, 甜度 TEXT, 
@@ -72,7 +71,7 @@ def show_receipt_modal(receipt_str):
         st.session_state.show_receipt = False; st.rerun()
 
 st.set_page_config(page_title="上宇林點餐系統", page_icon="🍵", layout="wide")
-st.title("🍵 上宇林點餐系統 (V2.27 歷史批次版)")
+st.title("🍵 上宇林點餐系統 (V2.28 歷史批次版)")
 
 tab1, tab2 = st.tabs(["🛒 我要點餐", "📊 管理後台"])
 
@@ -82,7 +81,6 @@ tab1, tab2 = st.tabs(["🛒 我要點餐", "📊 管理後台"])
 with tab1:
     is_open = get_system_status()
     if st.session_state.show_receipt:
-        # ✨ 已刪除氣球特效 st.balloons()
         show_receipt_modal(st.session_state.receipt_text)
 
     if not is_open:
@@ -129,34 +127,29 @@ with tab1:
                 receipt = "### 🧾 點餐成功明細\n"
                 for i in st.session_state.cart:
                     receipt += f"- **{i['飲品']}** ({i['甜度']}/{i['冰量']}) x{i['杯數']} — `${i['金額']}`\n"
-                    # ✨ 預設 session_id 為 '未收單'
                     c.execute("INSERT INTO orders (姓名, 飲品, 茶底, 甜度, 冰量, 加料, 杯數, 備註, 金額, 時間, session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)", 
                               (i["姓名"], i["飲品"], i["茶底"], i["甜度"], i["冰量"], i["加料"], i["杯數"], i["備註"], i["金額"], now, '未收單'))
                 conn.commit(); conn.close()
                 st.session_state.receipt_text = receipt; st.session_state.show_receipt = True; st.session_state.cart = []; st.rerun()
 
 # ==========================================
-# 分頁二：管理後台 (✨ 新增：收單與歷史切換)
+# 分頁二：管理後台 
 # ==========================================
 with tab2:
     if st.text_input("🔑 管理密碼", type="password") == "520":
         st.success("🔓 進入管理模式")
         
-        # 讀取所有不同的 session 列表
         conn = sqlite3.connect(DB_FILE)
         all_sessions = pd.read_sql("SELECT DISTINCT session_id FROM orders ORDER BY id DESC", conn)['session_id'].tolist()
         conn.close()
 
-        # ✨ 【下拉選單】：檢視特定批次訂單
         st.subheader("📜 歷史批次檢視")
         selected_session = st.selectbox("請選擇要查看的訂單批次：", all_sessions if all_sessions else ["尚無資料"])
         
-        # 根據選擇的批次讀取資料
         conn = sqlite3.connect(DB_FILE)
         df_view = pd.read_sql("SELECT * FROM orders WHERE session_id = ?", conn, params=(selected_session,))
         conn.close()
 
-        # ✨ 【收單按鈕】：僅在查看 '未收單' 時出現
         if selected_session == '未收單' and not df_view.empty:
             st.warning(f"目前『未收單』區域共有 {df_view['杯數'].sum()} 杯飲料待處理。")
             if st.button("🚀 執行收單 (將目前訂單存入歷史紀錄)", type="primary", use_container_width=True):
@@ -169,11 +162,9 @@ with tab2:
         
         st.write("---")
         
-        # 顯示當前選定批次的數據與管理工具
         if not df_view.empty:
             st.metric(f"💰 {selected_session} 總額", f"${df_view['金額'].sum()}")
             
-            # 報表匯出與編輯功能 (連動當前選定的 session)
             col_ex1, col_ex2 = st.columns(2)
             with col_ex1:
                 output = io.BytesIO()
@@ -206,3 +197,16 @@ with tab2:
                         for _, r in edited_df[edited_df["選取"]].iterrows():
                             c.execute("DELETE FROM orders WHERE id=?", (int(r['id']),))
                         conn.commit(); conn.close(); st.rerun()
+
+            # ✨ ✨ ✨ LINE 文字區強勢回歸！ ✨ ✨ ✨
+            st.write("---")
+            st.write("📋 **LINE 專用清單**")
+            
+            # 這裡的 df_view 會跟著上方下拉式選單的「批次」連動
+            summary = f"【上宇林 團購 ({selected_session})】\n總計: {df_view['杯數'].sum()} 杯 / ${df_view['金額'].sum()} 元\n" + "-"*20 + "\n"
+            for _, r in df_view.iterrows():
+                topping = f" +{r['加料']}" if r['加料'] != "無" else ""
+                note_str = f" (備註: {r['備註']})" if r['備註'] else ""
+                summary += f"{r['姓名']}: {r['飲品']} ({r['甜度']}/{r['冰量']}){topping} x{r['杯數']}{note_str} - ${r['金額']}\n"
+                
+            st.code(summary, language="text")
